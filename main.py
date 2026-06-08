@@ -1,5 +1,6 @@
 """AstrBot plugin that gives the LLM a private complaint-reporting tool."""
 
+import asyncio
 import re
 from collections.abc import Callable
 from typing import Any
@@ -84,7 +85,10 @@ class TattlePlugin(Star):
         )
 
         if failed:
-            logger.warning("complain_to_receivers partial failure: " + "; ".join(failed))
+            logger.warning(
+                "complain_to_receivers partial failure: %s",
+                "; ".join(failed),
+            )
 
         summary = f"Complaint finished: {len(sent)} sent, {len(failed)} failed."
         if sent:
@@ -103,14 +107,29 @@ class TattlePlugin(Star):
         sent: list[str] = []
         failed: list[str] = []
 
-        for uid in receivers:
-            ok, error = await self._send_private_message(event, platform_id, uid, message)
+        results = await asyncio.gather(
+            *(
+                self._send_to_receiver(event, platform_id, uid, message)
+                for uid in receivers
+            )
+        )
+        for uid, ok, error in results:
             if ok:
                 sent.append(uid)
             else:
                 failed.append(f"{uid}: {error}")
 
         return sent, failed
+
+    async def _send_to_receiver(
+        self,
+        event: AstrMessageEvent,
+        platform_id: str,
+        uid: str,
+        message: str,
+    ) -> tuple[str, bool, str]:
+        ok, error = await self._send_private_message(event, platform_id, uid, message)
+        return uid, ok, error
 
     async def _send_private_message(
         self,
