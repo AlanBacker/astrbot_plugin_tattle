@@ -13,6 +13,8 @@
 - `receiver_uids`: 告状接收人的 UID 列表。
 - `message_template`: 告状消息模板，可用变量包括 `{accused}`、`{reason}`、`{content}`、`{sender_id}`、`{sender_name}`、`{session_id}`。
 
+模板只会替换这些简单白名单占位符，不支持属性访问或表达式解析。
+
 ## LLM 工具
 
 工具名：`complain_to_receivers`
