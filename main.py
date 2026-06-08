@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -9,7 +10,8 @@ from astrbot.api.star import Context, Star
 
 
 PRIVATE_MESSAGE_TYPE = "FriendMessage"
-TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
+UID_SEPARATOR_RE = re.compile(r"[\s,;，；]+")
 TEMPLATE_KEYS = frozenset(
     {
         "accused",
@@ -37,8 +39,6 @@ class TattlePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._receivers = self._parse_receiver_uids(config.get("receiver_uids", []))
-        self._message_template = self._load_message_template()
 
     @filter.llm_tool(name="complain_to_receivers")
     async def complain_to_receivers(
@@ -64,7 +64,8 @@ class TattlePlugin(Star):
         if not content:
             return "Complaint failed: content must not be empty."
 
-        if not self._receivers:
+        receivers = self._parse_receiver_uids(self.config.get("receiver_uids", []))
+        if not receivers:
             return (
                 "Complaint failed: receiver_uids is empty. "
                 "Configure receiver UIDs in WebUI first."
@@ -75,7 +76,12 @@ class TattlePlugin(Star):
             return "Complaint failed: unable to determine the current platform ID."
 
         message = self._render_message(event, content, accused, reason)
-        sent, failed = await self._broadcast_complaint(event, platform_id, message)
+        sent, failed = await self._broadcast_complaint(
+            event,
+            platform_id,
+            receivers,
+            message,
+        )
 
         if failed:
             logger.warning("complain_to_receivers partial failure: " + "; ".join(failed))
@@ -91,12 +97,13 @@ class TattlePlugin(Star):
         self,
         event: AstrMessageEvent,
         platform_id: str,
+        receivers: list[str],
         message: str,
     ) -> tuple[list[str], list[str]]:
         sent: list[str] = []
         failed: list[str] = []
 
-        for uid in self._receivers:
+        for uid in receivers:
             ok, error = await self._send_private_message(event, platform_id, uid, message)
             if ok:
                 sent.append(uid)
@@ -118,7 +125,15 @@ class TattlePlugin(Star):
             if await self.context.send_message(session, message_chain):
                 return True, ""
             context_error = "未找到匹配平台"
-        except (AttributeError, TypeError, ValueError, RuntimeError, OSError) as exc:
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            RuntimeError,
+            OSError,
+            NotImplementedError,
+        ) as exc:
+            logger.exception("context.send_message failed for session=%s", session)
             context_error = str(exc)
 
         fallback_error = await self._try_aiocqhttp_send_private(event, uid, message)
@@ -134,32 +149,56 @@ class TattlePlugin(Star):
     ) -> str:
         try:
             platform_name = event.get_platform_name()
-        except (AttributeError, TypeError, ValueError) as exc:
+        except (AttributeError, TypeError, ValueError, NotImplementedError) as exc:
+            logger.exception("Failed to read platform name for OneBot fallback")
             return f"无法读取平台名称：{exc}"
 
         if platform_name != "aiocqhttp":
             return "当前平台不是 aiocqhttp"
 
-        bot = getattr(event, "bot", None)
-        if bot is None:
-            return "当前事件没有 OneBot 客户端"
-
-        api = getattr(bot, "api", None)
-        call_action = getattr(api, "call_action", None)
-        if not callable(call_action):
-            return "当前 OneBot 客户端不支持 call_action"
-
         try:
-            await call_action(
-                "send_private_msg",
-                user_id=int(uid),
-                message=message,
-            )
+            user_id = int(uid)
         except ValueError:
             return "UID 不是纯数字"
-        except (AttributeError, TypeError, RuntimeError, OSError) as exc:
+
+        try:
+            if not await self._call_onebot_action(
+                event,
+                "send_private_msg",
+                user_id=user_id,
+                message=message,
+            ):
+                return "当前 OneBot 客户端不支持 call_action"
+        except (
+            AttributeError,
+            TypeError,
+            RuntimeError,
+            OSError,
+            NotImplementedError,
+        ) as exc:
+            logger.exception("OneBot send_private_msg failed for uid=%s", uid)
             return str(exc)
         return ""
+
+    @staticmethod
+    async def _call_onebot_action(
+        event: AstrMessageEvent,
+        action: str,
+        **payload: Any,
+    ) -> bool:
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            return False
+        direct = getattr(bot, "call_action", None)
+        if callable(direct):
+            await direct(action=action, **payload)
+            return True
+        api = getattr(bot, "api", None)
+        call_action = getattr(api, "call_action", None)
+        if callable(call_action):
+            await call_action(action, **payload)
+            return True
+        return False
 
     def _render_message(
         self,
@@ -176,7 +215,7 @@ class TattlePlugin(Star):
             "sender_name": self._safe_call(event.get_sender_name),
             "session_id": str(getattr(event, "unified_msg_origin", "")),
         }
-        return self._render_safe_template(self._message_template, values)
+        return self._render_safe_template(self._load_message_template(), values)
 
     def _load_message_template(self) -> str:
         raw = self.config.get("message_template", DEFAULT_TEMPLATE)
@@ -196,18 +235,17 @@ class TattlePlugin(Star):
 
     @staticmethod
     def _parse_receiver_uids(raw: object) -> list[str]:
-        values: list[str]
         if isinstance(raw, list):
-            values = [str(item) for item in raw]
+            text = "\n".join(str(item) for item in raw if item is not None)
         elif isinstance(raw, str):
-            values = raw.replace(",", "\n").splitlines()
+            text = raw
         else:
-            values = []
+            return []
 
         seen: set[str] = set()
         uids: list[str] = []
-        for value in values:
-            uid = value.strip()
+        for uid in UID_SEPARATOR_RE.split(text):
+            uid = uid.strip()
             if uid and uid not in seen:
                 seen.add(uid)
                 uids.append(uid)
@@ -223,7 +261,7 @@ class TattlePlugin(Star):
             platform_id = event.get_platform_id()
             if platform_id:
                 return str(platform_id)
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError, NotImplementedError):
             pass
 
         umo = getattr(event, "unified_msg_origin", "")
@@ -241,7 +279,7 @@ class TattlePlugin(Star):
     def _safe_call(func: Callable[[], object]) -> str:
         try:
             return str(func())
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError, NotImplementedError):
             return ""
 
     async def terminate(self):
