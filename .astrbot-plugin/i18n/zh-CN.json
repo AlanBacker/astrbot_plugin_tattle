@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "display_name": "LLM 告状机",
+    "short_desc": "让 LLM 在想告状时私发消息给指定 UID。",
+    "desc": "注册一个 LLM 工具，当模型判断需要告状时，可向 WebUI 中配置的 UID 列表发送私聊消息。"
+  },
+  "config": {
+    "receiver_uids": {
+      "description": "告状接收人 UID 列表",
+      "hint": "填写要接收告状私聊的 UID。当前实现会在触发工具的同一平台下按 FriendMessage 私聊发送。"
+    },
+    "message_template": {
+      "description": "告状消息模板",
+      "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}"
+    }
+  }
+}

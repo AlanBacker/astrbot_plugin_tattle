@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "display_name": "LLM Tattle Tool",
+    "short_desc": "Let the LLM privately message configured UIDs when it wants to complain.",
+    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI."
+  },
+  "config": {
+    "receiver_uids": {
+      "description": "Complaint receiver UID list",
+      "hint": "UIDs that should receive private complaint messages. Messages are sent on the same platform as FriendMessage sessions."
+    },
+    "message_template": {
+      "description": "Complaint message template",
+      "hint": "Available variables: {accused}, {reason}, {content}, {sender_id}, {sender_name}, {session_id}"
+    }
+  }
+}

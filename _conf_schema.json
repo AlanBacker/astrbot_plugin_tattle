@@ -1,0 +1,14 @@
+{
+  "receiver_uids": {
+    "description": "告状接收人 UID 列表",
+    "type": "list",
+    "hint": "填写要接收告状私聊的 UID。当前实现会在触发工具的同一平台下按 FriendMessage 私聊发送。",
+    "default": []
+  },
+  "message_template": {
+    "description": "告状消息模板",
+    "type": "text",
+    "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}",
+    "default": "【LLM 告状】\n被告状对象：{accused}\n理由：{reason}\n内容：{content}\n来源：{sender_name}({sender_id})\n会话：{session_id}"
+  }
+}
