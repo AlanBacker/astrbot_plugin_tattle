@@ -1,9 +1,9 @@
 name: astrbot_plugin_tattle
-desc: Register an LLM tool that sends complaint messages to configured private UIDs.
-help: Configure receiver UIDs in WebUI. The LLM can call complain_to_receivers to send a private complaint.
+desc: 当LLM需要告状的时候，会调用注册的函数工具complain_to_receivers向指定列表人进行告状。
+help: 在配置文件中配置告状列表UID，通过sid指令可以获取到UID。
 version: v1.0.0
 author: AlanBacker
-repo: ""
+repo: "https://github.com/AlanBacker/astrbot_plugin_tattle"
 display_name: LLM 告状机
 short_desc: 让 LLM 在想告状时私发消息给指定 UID。
 astrbot_version: ">=4.5.7"
