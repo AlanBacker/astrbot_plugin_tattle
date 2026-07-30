@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM 告状机",
     "short_desc": "让 LLM 在想告状时私发消息给指定 UID。",
-    "desc": "注册一个 LLM 工具，当模型判断需要告状时，可向 WebUI 中配置的 UID 列表发送私聊消息。"
+    "desc": "注册一个 LLM 工具，当模型判断需要告状时，可向 WebUI 中配置的 UID 列表发送私聊消息。支持自动封禁：时间窗口内违规达到上限的用户会被禁止与 Bot 交互。"
   },
   "config": {
     "receiver_uids": {
@@ -12,6 +12,22 @@
     "message_template": {
       "description": "告状消息模板",
       "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}"
+    },
+    "ban_window_hours": {
+      "description": "违规统计时间窗口 x（小时）",
+      "hint": "统计违规次数的滑动时间窗口，支持小数。x、y、z 任一项不为正数时自动封禁功能关闭。"
+    },
+    "ban_max_violations": {
+      "description": "窗口内违规次数上限 y",
+      "hint": "同一用户在时间窗口内触发告状达到该次数时自动封禁，设为 0 可关闭自动封禁。"
+    },
+    "ban_duration_hours": {
+      "description": "封禁时长 z（小时）",
+      "hint": "触发封禁后禁止该用户与 Bot 交互的时长，支持小数。"
+    },
+    "ban_message_template": {
+      "description": "封禁提示文案",
+      "hint": "被封禁用户尝试与 Bot 交互时的提示文案，可用变量：{banned_time}（剩余封禁小时数）。"
     }
   }
 }

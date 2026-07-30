@@ -10,5 +10,29 @@
     "type": "text",
     "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}",
     "default": "【LLM 告状】\n被告状对象：{accused}\n理由：{reason}\n内容：{content}\n来源：{sender_name}({sender_id})\n会话：{session_id}"
+  },
+  "ban_window_hours": {
+    "description": "违规统计时间窗口 x（小时）",
+    "type": "float",
+    "hint": "统计违规次数的滑动时间窗口，支持小数。x、y、z 任一项不为正数时自动封禁功能关闭。",
+    "default": 1.0
+  },
+  "ban_max_violations": {
+    "description": "窗口内违规次数上限 y",
+    "type": "int",
+    "hint": "同一用户在时间窗口内触发告状达到该次数时自动封禁，设为 0 可关闭自动封禁。",
+    "default": 3
+  },
+  "ban_duration_hours": {
+    "description": "封禁时长 z（小时）",
+    "type": "float",
+    "hint": "触发封禁后禁止该用户与 Bot 交互的时长，支持小数。",
+    "default": 12.0
+  },
+  "ban_message_template": {
+    "description": "封禁提示文案",
+    "type": "text",
+    "hint": "被封禁用户尝试与 Bot 交互时的提示文案，可用变量：{banned_time}（剩余封禁小时数）。",
+    "default": "您已因违反使用条约而被封禁，剩余时间{banned_time}小时！"
   }
 }

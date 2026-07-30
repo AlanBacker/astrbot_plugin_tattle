@@ -1,7 +1,7 @@
 name: astrbot_plugin_tattle
-desc: 当LLM需要告状的时候，会调用注册的函数工具complain_to_receivers向指定列表人进行告状。
-help: 在配置文件中配置告状列表UID，通过sid指令可以获取到UID。
-version: v1.0.0
+desc: 当LLM需要告状的时候，会调用注册的函数工具complain_to_receivers向指定列表人进行告状。支持自动封禁：可配置 x 小时内违规 y 次后禁止用户与 Bot 交互 z 小时。
+help: 在配置文件中配置告状列表UID，通过sid指令可以获取到UID。自动封禁相关参数（时间窗口、次数上限、封禁时长、提示文案）可在插件配置中修改；管理员可用 /tattle_bans 查看封禁列表，/tattle_unban <UID> 解除封禁。
+version: v1.1.0
 author: AlanBacker
 repo: "https://github.com/AlanBacker/astrbot_plugin_tattle"
 display_name: LLM 告状机

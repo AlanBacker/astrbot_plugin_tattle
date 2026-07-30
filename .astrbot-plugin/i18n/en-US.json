@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM Tattle Tool",
     "short_desc": "Let the LLM privately message configured UIDs when it wants to complain.",
-    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI."
+    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI. Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
   },
   "config": {
     "receiver_uids": {
@@ -12,6 +12,22 @@
     "message_template": {
       "description": "Complaint message template",
       "hint": "Available variables: {accused}, {reason}, {content}, {sender_id}, {sender_name}, {session_id}"
+    },
+    "ban_window_hours": {
+      "description": "Violation window x (hours)",
+      "hint": "Sliding window used to count violations; decimals allowed. Auto-ban is disabled unless x, y and z are all positive."
+    },
+    "ban_max_violations": {
+      "description": "Max violations y within the window",
+      "hint": "A sender who triggers this many complaints inside the window is banned automatically. Set 0 to disable auto-ban."
+    },
+    "ban_duration_hours": {
+      "description": "Ban duration z (hours)",
+      "hint": "How long a banned user is blocked from interacting with the bot; decimals allowed."
+    },
+    "ban_message_template": {
+      "description": "Ban notice template",
+      "hint": "Message shown when a banned user tries to interact with the bot. Available variable: {banned_time} (remaining ban hours)."
     }
   }
 }
