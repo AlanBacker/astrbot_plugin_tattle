@@ -32,6 +32,10 @@ DEFAULT_TEMPLATE = (
 DEFAULT_BAN_WINDOW_HOURS = 1.0
 DEFAULT_BAN_MAX_VIOLATIONS = 3
 DEFAULT_BAN_DURATION_HOURS = 12.0
+# Admins bypass the gate by default so an auto-ban can never lock the owner
+# out of their own bot. Side effect: testing with an admin account looks like
+# the ban "did nothing" — hence the switch and the log line in the gate.
+DEFAULT_BAN_EXEMPT_ADMINS = True
 DEFAULT_BAN_MESSAGE_TEMPLATE = "您已因违反使用条约而被封禁，剩余时间{banned_time}小时！"
 BAN_STATE_FILE = "ban_state.json"
 # Must outrank every other handler so banned users are blocked before any of
@@ -102,7 +106,12 @@ class TattlePlugin(Star):
         remaining = await self._get_ban_remaining_hours(key)
         if remaining is None:
             return
-        if self._is_global_admin(event):
+        if self._ban_exempt_admins() and self._is_global_admin(event):
+            logger.info(
+                "tattle: %s is banned but passes as a global admin "
+                "(ban_exempt_admins is on)",
+                key,
+            )
             return
         if self._should_notify(event):
             yield event.plain_result(self._render_ban_message(remaining))
@@ -693,7 +702,13 @@ class TattlePlugin(Star):
         return min(count, MAX_EVIDENCE_COUNT)
 
     def _evidence_enabled(self) -> bool:
-        raw = self.config.get("forward_recent_messages", DEFAULT_EVIDENCE_ENABLED)
+        return self._config_flag("forward_recent_messages", DEFAULT_EVIDENCE_ENABLED)
+
+    def _ban_exempt_admins(self) -> bool:
+        return self._config_flag("ban_exempt_admins", DEFAULT_BAN_EXEMPT_ADMINS)
+
+    def _config_flag(self, key: str, default: bool) -> bool:
+        raw = self.config.get(key, default)
         if isinstance(raw, str):
             return raw.strip().lower() not in {"", "0", "false", "no", "off"}
         return bool(raw)

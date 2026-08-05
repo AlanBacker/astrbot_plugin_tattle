@@ -49,6 +49,12 @@
     "hint": "触发封禁后禁止该用户与 Bot 交互的时长，支持小数。",
     "default": 12.0
   },
+  "ban_exempt_admins": {
+    "description": "封禁豁免全局管理员",
+    "type": "bool",
+    "hint": "开启（默认）时，AstrBot 全局管理员即使被自动封禁也不会被拦截，避免管理员被误封后失去对 Bot 的控制。⚠️ 这意味着用管理员自己的账号测试封禁会“看起来没生效”——请用普通账号测试，或临时关闭本开关。关闭后被封禁的管理员同样会被拦截（仍可通过 WebUI 修改配置或停用插件来解封）。",
+    "default": true
+  },
   "ban_message_template": {
     "description": "封禁提示文案",
     "type": "text",

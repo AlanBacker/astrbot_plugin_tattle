@@ -37,6 +37,10 @@
       "description": "Ban duration z (hours)",
       "hint": "How long a banned user is blocked from interacting with the bot; decimals allowed."
     },
+    "ban_exempt_admins": {
+      "description": "Exempt global admins from bans",
+      "hint": "When on (default), AstrBot global admins are never blocked even while auto-banned, so an admin can never lock themselves out. ⚠️ This also means testing the ban with an admin account looks like it \"did nothing\" — test with a regular account, or turn this off temporarily. When off, banned admins are blocked too (they can still recover via the WebUI)."
+    },
     "ban_message_template": {
       "description": "Ban notice template",
       "hint": "Message shown when a banned user tries to interact with the bot. Available variable: {banned_time} (remaining ban hours)."
