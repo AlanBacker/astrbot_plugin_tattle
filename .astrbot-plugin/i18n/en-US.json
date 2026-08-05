@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM Tattle Tool",
     "short_desc": "Let the LLM privately message configured UIDs when it wants to complain.",
-    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI, optionally attaching the most recent chat messages as evidence — by default as a QQ merged-forward chat-log card (OneBot platforms only). Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
+    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI, optionally attaching the most recent chat messages as evidence — by default as a QQ merged-forward chat-log card that forwards the original messages, so images and @ mentions stay intact (OneBot platforms only). Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
   },
   "config": {
     "receiver_uids": {
@@ -23,7 +23,7 @@
     },
     "evidence_style": {
       "description": "How the records are presented",
-      "hint": "⚠️ OneBot (aiocqhttp) only. `forward` sends a QQ merged-forward chat-log card as a separate message after the complaint, one entry per sender; `text` inlines the records into the complaint body with timestamps and honours the {evidence} variable. Card sends that fail fall back to text automatically."
+      "hint": "⚠️ OneBot (aiocqhttp) only. `forward` sends a QQ merged-forward chat-log card as a separate message after the complaint; it forwards the original messages (the same mechanism the phone client uses), so images, @ mentions, stickers and voice notes survive intact. `text` inlines the records into the complaint body with timestamps (images become an [image] placeholder) and honours the {evidence} variable. Card sends that fail fall back to text automatically."
     },
     "ban_window_hours": {
       "description": "Violation window x (hours)",

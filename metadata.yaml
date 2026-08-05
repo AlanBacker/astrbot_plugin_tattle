@@ -1,7 +1,7 @@
 name: astrbot_plugin_tattle
-desc: 当LLM需要告状的时候，会调用注册的函数工具complain_to_receivers向指定列表人进行告状。告状可附带最近若干条聊天记录作为证据，默认以聊天记录卡片（合并转发）形式发送（仅 OneBot 平台生效）。支持自动封禁：可配置 x 小时内违规 y 次后禁止用户与 Bot 交互 z 小时。
+desc: 当LLM需要告状的时候，会调用注册的函数工具complain_to_receivers向指定列表人进行告状。告状可附带最近若干条聊天记录作为证据，默认以聊天记录卡片（合并转发，原消息转发，图片和 @ 原样保留）形式发送（仅 OneBot 平台生效）。支持自动封禁：可配置 x 小时内违规 y 次后禁止用户与 Bot 交互 z 小时。
 help: 在配置文件中配置告状列表UID，通过sid指令可以获取到UID。默认会附带举报当时最近 5 条消息作为证据（条数可改，最高 100，仅 OneBot 平台生效，可关闭）；呈现方式可在「聊天记录卡片」与「纯文本追加」间切换，默认卡片。自动封禁相关参数（时间窗口、次数上限、封禁时长、提示文案）可在插件配置中修改；管理员可用 /tattle_bans 查看封禁列表，/tattle_unban <UID> 解除封禁。
-version: v1.2.0
+version: v1.2.1
 author: AlanBacker
 repo: "https://github.com/AlanBacker/astrbot_plugin_tattle"
 display_name: LLM 告状机

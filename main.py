@@ -11,7 +11,6 @@ from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Node, Nodes, Plain
 from astrbot.api.star import Context, Star, StarTools
 
 
@@ -155,7 +154,7 @@ class TattlePlugin(Star):
 
         entries = await self._collect_evidence(event)
         evidence_text = self._format_evidence(entries)
-        nodes = self._build_evidence_nodes(entries)
+        as_card = bool(entries) and self._evidence_style() == EVIDENCE_STYLE_FORWARD
         # In card mode the records ride along as a separate forward message, so
         # the body carries no inline evidence. The plain-text OneBot fallback
         # cannot send a card, hence the second, inlined rendering.
@@ -164,11 +163,11 @@ class TattlePlugin(Star):
             content,
             accused,
             reason,
-            "" if nodes is not None else evidence_text,
+            "" if as_card else evidence_text,
         )
         fallback_message = (
             self._render_message(event, content, accused, reason, evidence_text)
-            if nodes is not None
+            if as_card
             else message
         )
         sent, failed = await self._broadcast_complaint(
@@ -176,8 +175,9 @@ class TattlePlugin(Star):
             platform_id,
             receivers,
             message,
-            nodes,
             fallback_message,
+            entries if as_card else [],
+            evidence_text,
         )
 
         if failed:
@@ -228,8 +228,9 @@ class TattlePlugin(Star):
         platform_id: str,
         receivers: list[str],
         message: str,
-        nodes: Nodes | None = None,
         fallback_message: str = "",
+        card_entries: list[dict] | None = None,
+        evidence_text: str = "",
     ) -> tuple[list[str], list[str]]:
         sent: list[str] = []
         failed: list[str] = []
@@ -241,8 +242,9 @@ class TattlePlugin(Star):
                     platform_id,
                     uid,
                     message,
-                    nodes,
                     fallback_message or message,
+                    card_entries or [],
+                    evidence_text,
                 )
                 for uid in receivers
             )
@@ -261,16 +263,18 @@ class TattlePlugin(Star):
         platform_id: str,
         uid: str,
         message: str,
-        nodes: Nodes | None,
         fallback_message: str,
+        card_entries: list[dict],
+        evidence_text: str,
     ) -> tuple[str, bool, str]:
         ok, error = await self._send_private_message(
             event,
             platform_id,
             uid,
             message,
-            nodes,
             fallback_message,
+            card_entries,
+            evidence_text,
         )
         return uid, ok, error
 
@@ -280,19 +284,40 @@ class TattlePlugin(Star):
         platform_id: str,
         uid: str,
         message: str,
-        nodes: Nodes | None = None,
         fallback_message: str = "",
+        card_entries: list[dict] | None = None,
+        evidence_text: str = "",
     ) -> tuple[bool, str]:
+        """Send the complaint body, then the evidence card when there is one."""
         session = self._private_session_id(platform_id, uid)
+        ok, context_error = await self._send_text(session, message)
+        if not ok:
+            # The normal path is down, so a card would fail too — squeeze the
+            # records into the single plain message the OneBot fallback can send.
+            fallback_error = await self._try_aiocqhttp_send_private(
+                event,
+                uid,
+                fallback_message or message,
+            )
+            if fallback_error:
+                return False, f"{context_error}; OneBot 兜底失败：{fallback_error}"
+            return True, ""
+
+        if not card_entries:
+            return True, ""
+        if await self._send_forward_card(event, uid, card_entries):
+            return True, ""
+        # The body already went out; deliver the records as plain text so the
+        # evidence is never silently dropped.
+        logger.warning("tattle: forward card failed for uid=%s, sending text", uid)
+        if evidence_text:
+            await self._send_text(session, evidence_text)
+        return True, ""
+
+    async def _send_text(self, session: str, text: str) -> tuple[bool, str]:
         try:
-            message_chain = MessageChain().message(message)
-            if nodes is not None:
-                # AstrBot's aiocqhttp adapter turns a trailing Nodes component
-                # into a send_private_forward_msg call of its own.
-                message_chain.chain.append(nodes)
-            if await self.context.send_message(session, message_chain):
+            if await self.context.send_message(session, MessageChain().message(text)):
                 return True, ""
-            context_error = "未找到匹配平台"
         except (
             AttributeError,
             TypeError,
@@ -302,16 +327,8 @@ class TattlePlugin(Star):
             NotImplementedError,
         ) as exc:
             logger.exception("context.send_message failed for session=%s", session)
-            context_error = str(exc)
-
-        fallback_error = await self._try_aiocqhttp_send_private(
-            event,
-            uid,
-            fallback_message or message,
-        )
-        if not fallback_error:
-            return True, ""
-        return False, f"{context_error}; OneBot 兜底失败：{fallback_error}"
+            return False, str(exc)
+        return False, "未找到匹配平台"
 
     async def _try_aiocqhttp_send_private(
         self,
@@ -492,25 +509,114 @@ class TattlePlugin(Star):
         ]
         return len(stamps) >= 2 and stamps[0] > stamps[-1]
 
-    def _build_evidence_nodes(self, entries: list[dict]) -> Nodes | None:
-        """Build a QQ 合并转发 card, or None when text mode / nothing to send."""
-        if not entries or self._evidence_style() != EVIDENCE_STYLE_FORWARD:
-            return None
-        nodes = []
-        try:
-            for entry in entries:
-                name, uid = self._evidence_entry_sender(entry)
-                nodes.append(
-                    Node(
-                        content=[Plain(self._evidence_entry_text(entry))],
-                        name=name or uid or "未知用户",
-                        uin=uid or "0",
-                    )
+    async def _send_forward_card(
+        self,
+        event: AstrMessageEvent,
+        uid: str,
+        entries: list[dict],
+    ) -> bool:
+        """Send the records as a QQ 合并转发 card. Returns False if it could not."""
+        user_id = self._numeric_id(uid)
+        if user_id is None:
+            return False
+        routing = self._routing_params(event)
+        for messages in self._forward_payloads(entries):
+            try:
+                dispatched, _ = await self._call_onebot_action(
+                    event,
+                    "send_private_forward_msg",
+                    user_id=user_id,
+                    messages=messages,
+                    **routing,
                 )
-        except Exception as exc:  # noqa: BLE001 - degrade to the text block
-            logger.warning("tattle: failed to build forward card: %s", exc)
+            except Exception as exc:  # noqa: BLE001 - try the next payload shape
+                logger.warning("tattle: send_private_forward_msg failed: %s", exc)
+                continue
+            if dispatched:
+                return True
+            return False  # no call_action at all; retrying cannot help
+        return False
+
+    @classmethod
+    def _forward_payloads(cls, entries: list[dict]) -> list[list[dict]]:
+        """Candidate node payloads, most faithful first.
+
+        A node referencing a message id is forwarded by the client itself, so
+        images, @ mentions and everything else render exactly like the original
+        — this is what the phone client does. Clients that refuse id nodes get
+        a second attempt with the segments rebuilt by hand.
+        """
+        by_reference = [cls._reference_node(e) or cls._rebuilt_node(e) for e in entries]
+        rebuilt = [cls._rebuilt_node(e) for e in entries]
+        payloads = [by_reference]
+        if by_reference != rebuilt:
+            payloads.append(rebuilt)
+        return payloads
+
+    @staticmethod
+    def _reference_node(entry: dict) -> dict | None:
+        message_id = entry.get("message_id")
+        if isinstance(message_id, bool) or not isinstance(message_id, (int, str)):
             return None
-        return Nodes(nodes)
+        text = str(message_id).strip()
+        if not text or text == "0":
+            return None
+        return {"type": "node", "data": {"id": text}}
+
+    @classmethod
+    def _rebuilt_node(cls, entry: dict) -> dict:
+        name, uid = cls._evidence_entry_sender(entry)
+        content = cls._rebuild_segments(entry.get("message"))
+        if not content:
+            content = [{"type": "text", "data": {"text": cls._evidence_entry_text(entry)}}]
+        return {
+            "type": "node",
+            "data": {
+                "user_id": uid or "0",
+                "nickname": name or uid or "未知用户",
+                "content": content,
+            },
+        }
+
+    @classmethod
+    def _rebuild_segments(cls, message: object) -> list[dict]:
+        """Re-send the original segments so images and @ survive the forward."""
+        if isinstance(message, str):
+            text = message.strip()
+            return [{"type": "text", "data": {"text": text}}] if text else []
+        if not isinstance(message, list):
+            return []
+        segments = []
+        for segment in message:
+            if not isinstance(segment, dict):
+                continue
+            rebuilt = cls._rebuild_segment(segment)
+            if rebuilt is not None:
+                segments.append(rebuilt)
+        return segments
+
+    @staticmethod
+    def _rebuild_segment(segment: dict) -> dict | None:
+        seg_type = str(segment.get("type") or "")
+        raw_data = segment.get("data")
+        data = raw_data if isinstance(raw_data, dict) else {}
+        if seg_type == "text":
+            text = str(data.get("text") or "")
+            return {"type": "text", "data": {"text": text}} if text else None
+        if seg_type == "at":
+            target = str(data.get("qq") or "").strip()
+            return {"type": "at", "data": {"qq": target}} if target else None
+        if seg_type == "face":
+            face_id = str(data.get("id") or "").strip()
+            return {"type": "face", "data": {"id": face_id}} if face_id else None
+        if seg_type in {"image", "record", "video"}:
+            # History gives both a cache name and a fetchable URL; only the URL
+            # can be re-uploaded from another context.
+            source = str(data.get("url") or data.get("file") or "").strip()
+            return {"type": seg_type, "data": {"file": source}} if source else None
+        # reply/forward point at messages outside this card, and unknown types
+        # risk a rejected payload — the caller falls back to flattened text.
+        return None
 
     @classmethod
     def _format_evidence(cls, entries: list[dict]) -> str:
