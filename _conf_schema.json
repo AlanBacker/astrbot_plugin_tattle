@@ -23,6 +23,14 @@
     "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效。默认 5 条，最高 100 条，超出按 100 处理，设为 0 等同于关闭。单条消息超过 300 字会被截断。",
     "default": 5
   },
+  "evidence_style": {
+    "description": "消息记录的呈现方式",
+    "type": "string",
+    "options": ["forward", "text"],
+    "labels": ["聊天记录卡片（合并转发）", "纯文本追加到告状正文"],
+    "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效。卡片模式会在告状正文之后单独发一条 QQ「聊天记录」合并转发卡片，按发送者分条展示；纯文本模式则把记录直接拼进告状正文（带时间戳），可配合 {evidence} 变量控制位置。卡片发送失败时会自动退回纯文本。",
+    "default": "forward"
+  },
   "ban_window_hours": {
     "description": "违规统计时间窗口 x（小时）",
     "type": "float",

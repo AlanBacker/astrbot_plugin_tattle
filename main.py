@@ -11,6 +11,7 @@ from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Node, Nodes, Plain
 from astrbot.api.star import Context, Star, StarTools
 
 
@@ -42,6 +43,11 @@ SECONDS_PER_HOUR = 3600.0
 DEFAULT_EVIDENCE_ENABLED = True
 DEFAULT_EVIDENCE_COUNT = 5
 MAX_EVIDENCE_COUNT = 100
+# "forward" ships the records as a QQ 聊天记录 card, "text" inlines them.
+EVIDENCE_STYLE_FORWARD = "forward"
+EVIDENCE_STYLE_TEXT = "text"
+EVIDENCE_STYLES = (EVIDENCE_STYLE_FORWARD, EVIDENCE_STYLE_TEXT)
+DEFAULT_EVIDENCE_STYLE = EVIDENCE_STYLE_FORWARD
 # One pasted wall of text should not blow up the whole evidence block.
 EVIDENCE_TEXT_LIMIT = 300
 EVIDENCE_TIME_FORMAT = "%m-%d %H:%M:%S"
@@ -147,13 +153,31 @@ class TattlePlugin(Star):
                 ban_note,
             )
 
-        evidence = await self._collect_evidence(event)
-        message = self._render_message(event, content, accused, reason, evidence)
+        entries = await self._collect_evidence(event)
+        evidence_text = self._format_evidence(entries)
+        nodes = self._build_evidence_nodes(entries)
+        # In card mode the records ride along as a separate forward message, so
+        # the body carries no inline evidence. The plain-text OneBot fallback
+        # cannot send a card, hence the second, inlined rendering.
+        message = self._render_message(
+            event,
+            content,
+            accused,
+            reason,
+            "" if nodes is not None else evidence_text,
+        )
+        fallback_message = (
+            self._render_message(event, content, accused, reason, evidence_text)
+            if nodes is not None
+            else message
+        )
         sent, failed = await self._broadcast_complaint(
             event,
             platform_id,
             receivers,
             message,
+            nodes,
+            fallback_message,
         )
 
         if failed:
@@ -204,13 +228,22 @@ class TattlePlugin(Star):
         platform_id: str,
         receivers: list[str],
         message: str,
+        nodes: Nodes | None = None,
+        fallback_message: str = "",
     ) -> tuple[list[str], list[str]]:
         sent: list[str] = []
         failed: list[str] = []
 
         results = await asyncio.gather(
             *(
-                self._send_to_receiver(event, platform_id, uid, message)
+                self._send_to_receiver(
+                    event,
+                    platform_id,
+                    uid,
+                    message,
+                    nodes,
+                    fallback_message or message,
+                )
                 for uid in receivers
             )
         )
@@ -228,8 +261,17 @@ class TattlePlugin(Star):
         platform_id: str,
         uid: str,
         message: str,
+        nodes: Nodes | None,
+        fallback_message: str,
     ) -> tuple[str, bool, str]:
-        ok, error = await self._send_private_message(event, platform_id, uid, message)
+        ok, error = await self._send_private_message(
+            event,
+            platform_id,
+            uid,
+            message,
+            nodes,
+            fallback_message,
+        )
         return uid, ok, error
 
     async def _send_private_message(
@@ -238,10 +280,16 @@ class TattlePlugin(Star):
         platform_id: str,
         uid: str,
         message: str,
+        nodes: Nodes | None = None,
+        fallback_message: str = "",
     ) -> tuple[bool, str]:
         session = self._private_session_id(platform_id, uid)
         try:
             message_chain = MessageChain().message(message)
+            if nodes is not None:
+                # AstrBot's aiocqhttp adapter turns a trailing Nodes component
+                # into a send_private_forward_msg call of its own.
+                message_chain.chain.append(nodes)
             if await self.context.send_message(session, message_chain):
                 return True, ""
             context_error = "未找到匹配平台"
@@ -256,7 +304,11 @@ class TattlePlugin(Star):
             logger.exception("context.send_message failed for session=%s", session)
             context_error = str(exc)
 
-        fallback_error = await self._try_aiocqhttp_send_private(event, uid, message)
+        fallback_error = await self._try_aiocqhttp_send_private(
+            event,
+            uid,
+            fallback_message or message,
+        )
         if not fallback_error:
             return True, ""
         return False, f"{context_error}; OneBot 兜底失败：{fallback_error}"
@@ -369,16 +421,16 @@ class TattlePlugin(Star):
 
     # ------------------------------------------------------------- 证据消息记录
 
-    async def _collect_evidence(self, event: AstrMessageEvent) -> str:
+    async def _collect_evidence(self, event: AstrMessageEvent) -> list[dict]:
         """Fetch the most recent messages of this chat as complaint evidence.
 
-        OneBot (aiocqhttp) only — every other platform returns an empty block.
+        OneBot (aiocqhttp) only — every other platform yields no entries.
         Evidence is decoration: any failure is logged and swallowed so the
         complaint itself still goes out.
         """
         count = self._evidence_count()
         if count < 1:
-            return ""
+            return []
 
         platform_name = self._safe_call(event.get_platform_name)
         if platform_name != ONEBOT_PLATFORM_NAME:
@@ -387,16 +439,13 @@ class TattlePlugin(Star):
                 platform_name,
                 ONEBOT_PLATFORM_NAME,
             )
-            return ""
+            return []
 
         try:
-            entries = await self._fetch_recent_messages(event, count)
+            return await self._fetch_recent_messages(event, count)
         except Exception as exc:  # noqa: BLE001 - never break the complaint
             logger.warning("tattle: failed to fetch message history: %s", exc)
-            return ""
-        if not entries:
-            return ""
-        return self._format_evidence(entries)
+            return []
 
     async def _fetch_recent_messages(
         self,
@@ -443,18 +492,37 @@ class TattlePlugin(Star):
         ]
         return len(stamps) >= 2 and stamps[0] > stamps[-1]
 
+    def _build_evidence_nodes(self, entries: list[dict]) -> Nodes | None:
+        """Build a QQ 合并转发 card, or None when text mode / nothing to send."""
+        if not entries or self._evidence_style() != EVIDENCE_STYLE_FORWARD:
+            return None
+        nodes = []
+        try:
+            for entry in entries:
+                name, uid = self._evidence_entry_sender(entry)
+                nodes.append(
+                    Node(
+                        content=[Plain(self._evidence_entry_text(entry))],
+                        name=name or uid or "未知用户",
+                        uin=uid or "0",
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 - degrade to the text block
+            logger.warning("tattle: failed to build forward card: %s", exc)
+            return None
+        return Nodes(nodes)
+
     @classmethod
     def _format_evidence(cls, entries: list[dict]) -> str:
+        if not entries:
+            return ""
         lines = [f"——最近 {len(entries)} 条消息——"]
         lines.extend(cls._format_evidence_entry(entry) for entry in entries)
         return "\n".join(lines)
 
     @classmethod
     def _format_evidence_entry(cls, entry: dict) -> str:
-        raw_sender = entry.get("sender")
-        sender = raw_sender if isinstance(raw_sender, dict) else {}
-        name = str(sender.get("card") or sender.get("nickname") or "").strip()
-        uid = str(sender.get("user_id") or "").strip()
+        name, uid = cls._evidence_entry_sender(entry)
         if name and uid:
             who = f"{name}({uid})"
         else:
@@ -466,13 +534,24 @@ class TattlePlugin(Star):
             if isinstance(stamp, (int, float)) and stamp > 0
             else "--"
         )
+        return f"[{when}] {who}：{cls._evidence_entry_text(entry)}"
 
+    @staticmethod
+    def _evidence_entry_sender(entry: dict) -> tuple[str, str]:
+        raw_sender = entry.get("sender")
+        sender = raw_sender if isinstance(raw_sender, dict) else {}
+        name = str(sender.get("card") or sender.get("nickname") or "").strip()
+        uid = str(sender.get("user_id") or "").strip()
+        return name, uid
+
+    @classmethod
+    def _evidence_entry_text(cls, entry: dict) -> str:
         text = cls._flatten_message_segments(entry.get("message"))
         if not text:
             text = str(entry.get("raw_message") or "").strip()
         if len(text) > EVIDENCE_TEXT_LIMIT:
             text = text[:EVIDENCE_TEXT_LIMIT] + "…（已截断）"
-        return f"[{when}] {who}：{text or '[空消息]'}"
+        return text or "[空消息]"
 
     @staticmethod
     def _flatten_message_segments(message: object) -> str:
@@ -512,6 +591,11 @@ class TattlePlugin(Star):
         if isinstance(raw, str):
             return raw.strip().lower() not in {"", "0", "false", "no", "off"}
         return bool(raw)
+
+    def _evidence_style(self) -> str:
+        raw = self.config.get("evidence_style", DEFAULT_EVIDENCE_STYLE)
+        style = str(raw).strip().lower()
+        return style if style in EVIDENCE_STYLES else DEFAULT_EVIDENCE_STYLE
 
     @staticmethod
     def _routing_params(event: AstrMessageEvent) -> dict[str, Any]:

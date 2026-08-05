@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM Tattle Tool",
     "short_desc": "Let the LLM privately message configured UIDs when it wants to complain.",
-    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI, optionally attaching the most recent chat messages as evidence (OneBot platforms only). Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
+    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI, optionally attaching the most recent chat messages as evidence — by default as a QQ merged-forward chat-log card (OneBot platforms only). Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
   },
   "config": {
     "receiver_uids": {
@@ -20,6 +20,10 @@
     "recent_message_count": {
       "description": "Number of messages to attach",
       "hint": "⚠️ OneBot (aiocqhttp) only. Defaults to 5, capped at 100; larger values are clamped and 0 disables it. Messages longer than 300 characters are truncated."
+    },
+    "evidence_style": {
+      "description": "How the records are presented",
+      "hint": "⚠️ OneBot (aiocqhttp) only. `forward` sends a QQ merged-forward chat-log card as a separate message after the complaint, one entry per sender; `text` inlines the records into the complaint body with timestamps and honours the {evidence} variable. Card sends that fail fall back to text automatically."
     },
     "ban_window_hours": {
       "description": "Violation window x (hours)",
