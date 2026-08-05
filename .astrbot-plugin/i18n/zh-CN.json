@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM 告状机",
     "short_desc": "让 LLM 在想告状时私发消息给指定 UID。",
-    "desc": "注册一个 LLM 工具，当模型判断需要告状时，可向 WebUI 中配置的 UID 列表发送私聊消息。支持自动封禁：时间窗口内违规达到上限的用户会被禁止与 Bot 交互。"
+    "desc": "注册一个 LLM 工具，当模型判断需要告状时，可向 WebUI 中配置的 UID 列表发送私聊消息，并可附带最近若干条聊天记录作为证据（仅 OneBot 平台生效）。支持自动封禁：时间窗口内违规达到上限的用户会被禁止与 Bot 交互。"
   },
   "config": {
     "receiver_uids": {
@@ -11,7 +11,15 @@
     },
     "message_template": {
       "description": "告状消息模板",
-      "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}"
+      "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}、{evidence}（最近消息记录，未写该变量时会自动附在末尾）"
+    },
+    "forward_recent_messages": {
+      "description": "告状时附带最近消息记录（证据）",
+      "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效，其他平台无法拉取聊天记录，会自动跳过。开启后会把举报当时的最近若干条消息一并转发给接收人。"
+    },
+    "recent_message_count": {
+      "description": "附带的消息条数",
+      "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效。默认 5 条，最高 100 条，超出按 100 处理，设为 0 等同于关闭。单条消息超过 300 字会被截断。"
     },
     "ban_window_hours": {
       "description": "违规统计时间窗口 x（小时）",

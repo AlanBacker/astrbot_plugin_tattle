@@ -8,8 +8,20 @@
   "message_template": {
     "description": "告状消息模板",
     "type": "text",
-    "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}",
+    "hint": "可用变量：{accused}、{reason}、{content}、{sender_id}、{sender_name}、{session_id}、{evidence}（最近消息记录，未写该变量时会自动附在末尾）",
     "default": "【LLM 告状】\n被告状对象：{accused}\n理由：{reason}\n内容：{content}\n来源：{sender_name}({sender_id})\n会话：{session_id}"
+  },
+  "forward_recent_messages": {
+    "description": "告状时附带最近消息记录（证据）",
+    "type": "bool",
+    "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效，其他平台无法拉取聊天记录，会自动跳过。开启后会把举报当时的最近若干条消息一并转发给接收人。",
+    "default": true
+  },
+  "recent_message_count": {
+    "description": "附带的消息条数",
+    "type": "int",
+    "hint": "⚠️ 仅 OneBot（aiocqhttp）平台生效。默认 5 条，最高 100 条，超出按 100 处理，设为 0 等同于关闭。单条消息超过 300 字会被截断。",
+    "default": 5
   },
   "ban_window_hours": {
     "description": "违规统计时间窗口 x（小时）",

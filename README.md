@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="logo.png" alt="LLM 告状机" width="160">
+</p>
+
 # AstrBot LLM 告状机
 
 这个插件会向 AstrBot 注册一个 LLM 工具 `complain_to_receivers`。当 LLM 判断“我要告状”时，可以调用该工具，把告状内容私发给 WebUI 配置里的 UID 列表。
 
 从 v1.1.0 起，插件还内置了自动封禁：同一用户在 x 小时内触发告状达到 y 次后，会被禁止与 Bot 交互 z 小时。
+
+从 v1.2.0 起，告状默认会附带举报当时的最近 5 条聊天记录作为证据（**仅 OneBot / aiocqhttp 平台生效**）。
 
 ## 安装
 
@@ -13,7 +19,9 @@
 在插件配置里填写：
 
 - `receiver_uids`: 告状接收人的 UID 列表。
-- `message_template`: 告状消息模板，可用变量包括 `{accused}`、`{reason}`、`{content}`、`{sender_id}`、`{sender_name}`、`{session_id}`。
+- `message_template`: 告状消息模板，可用变量包括 `{accused}`、`{reason}`、`{content}`、`{sender_id}`、`{sender_name}`、`{session_id}`、`{evidence}`。
+- `forward_recent_messages`: 是否在告状时附带最近消息记录作为证据，默认开启。**仅 OneBot（aiocqhttp）平台生效。**
+- `recent_message_count`: 附带的消息条数，默认 `5`，最高 `100`，设为 `0` 等同于关闭。
 - `ban_window_hours`: 违规统计时间窗口 x（小时，支持小数），默认 `1`。
 - `ban_max_violations`: 窗口内违规次数上限 y，默认 `3`。设为 `0` 可关闭自动封禁。
 - `ban_duration_hours`: 封禁时长 z（小时，支持小数），默认 `12`。
@@ -34,6 +42,25 @@
 当前实现使用触发工具的同一平台 ID，并按 `平台ID:FriendMessage:UID` 构造私聊会话发送消息。QQ/OneBot 私聊场景下，AstrBot 会话通常形如 `default:FriendMessage:123456`。
 
 工具执行结果只返回给 LLM，不会在当前聊天会话额外发送“告状完成”提示；但若本次告状触发了自动封禁，会在当前会话向该用户发送封禁提示。
+
+## 附带证据（最近消息记录）
+
+> ⚠️ **该功能仅在 OneBot（aiocqhttp）平台生效。** 其他平台（Telegram、微信、Discord 等）没有可用的聊天记录拉取接口，插件会自动跳过，告状本身照常发送。
+
+- 开关为 `forward_recent_messages`，**默认开启**；条数为 `recent_message_count`，默认 `5`，可自定义，**最高 100**（填更大的值按 100 处理，填 `0` 或关闭开关即不附带）。
+- 群聊调用 OneBot 的 `get_group_msg_history`，私聊调用 `get_friend_msg_history`，取举报当时最新的 N 条消息。
+- 消息记录会以如下形式附在告状正文后面：
+
+  ```
+  ——最近 5 条消息——
+  [08-06 14:23:01] 张三(10001)：你今天怎么这么烦
+  [08-06 14:23:10] 李四(10002)：[图片]
+  ```
+
+- 图片、语音、文件、卡片等非文本内容会渲染成 `[图片]`、`[语音]` 之类的占位标记；`@` 会渲染成 `@QQ号`。
+- 单条消息超过 300 字会被截断并标注“（已截断）”，避免一条长文本把整个消息撑爆。
+- 模板里写了 `{evidence}` 就按你放置的位置插入；没写则自动追加到消息末尾，所以老模板不用改也能收到证据。
+- 拉取失败（客户端不支持该 API、账号无权限、网络异常等）只会写一条 warning 日志，不影响告状消息本身发出。
 
 ## 自动封禁
 

@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "LLM Tattle Tool",
     "short_desc": "Let the LLM privately message configured UIDs when it wants to complain.",
-    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI. Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
+    "desc": "Registers an LLM tool that sends complaint messages to the UID list configured in WebUI, optionally attaching the most recent chat messages as evidence (OneBot platforms only). Includes auto-ban: users who trigger too many complaints within a time window are blocked from interacting with the bot."
   },
   "config": {
     "receiver_uids": {
@@ -11,7 +11,15 @@
     },
     "message_template": {
       "description": "Complaint message template",
-      "hint": "Available variables: {accused}, {reason}, {content}, {sender_id}, {sender_name}, {session_id}"
+      "hint": "Available variables: {accused}, {reason}, {content}, {sender_id}, {sender_name}, {session_id}, {evidence} (recent chat log; appended at the end when the variable is absent)"
+    },
+    "forward_recent_messages": {
+      "description": "Attach recent messages as evidence",
+      "hint": "⚠️ OneBot (aiocqhttp) only — other platforms cannot fetch chat history and are skipped silently. When on, the most recent messages at complaint time are forwarded to the receivers."
+    },
+    "recent_message_count": {
+      "description": "Number of messages to attach",
+      "hint": "⚠️ OneBot (aiocqhttp) only. Defaults to 5, capped at 100; larger values are clamped and 0 disables it. Messages longer than 300 characters are truncated."
     },
     "ban_window_hours": {
       "description": "Violation window x (hours)",

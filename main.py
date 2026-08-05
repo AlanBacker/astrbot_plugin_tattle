@@ -16,6 +16,7 @@ from astrbot.api.star import Context, Star, StarTools
 
 PLUGIN_NAME = "astrbot_plugin_tattle"
 PRIVATE_MESSAGE_TYPE = "FriendMessage"
+ONEBOT_PLATFORM_NAME = "aiocqhttp"
 TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 UID_SEPARATOR_RE = re.compile(r"[\s,;，；]+")
 
@@ -37,6 +38,33 @@ BAN_STATE_FILE = "ban_state.json"
 # them (including this plugin's own commands and the LLM pipeline) can run.
 BAN_GATE_PRIORITY = 10000
 SECONDS_PER_HOUR = 3600.0
+
+DEFAULT_EVIDENCE_ENABLED = True
+DEFAULT_EVIDENCE_COUNT = 5
+MAX_EVIDENCE_COUNT = 100
+# One pasted wall of text should not blow up the whole evidence block.
+EVIDENCE_TEXT_LIMIT = 300
+EVIDENCE_TIME_FORMAT = "%m-%d %H:%M:%S"
+EVIDENCE_SEGMENT_LABELS = {
+    "image": "[图片]",
+    "face": "[表情]",
+    "mface": "[表情]",
+    "record": "[语音]",
+    "video": "[视频]",
+    "file": "[文件]",
+    "reply": "[回复]",
+    "forward": "[合并转发]",
+    "node": "[合并转发]",
+    "json": "[卡片消息]",
+    "xml": "[卡片消息]",
+    "markdown": "[Markdown]",
+    "poke": "[戳一戳]",
+    "share": "[分享]",
+    "music": "[音乐分享]",
+    "location": "[位置]",
+    "dice": "[骰子]",
+    "rps": "[猜拳]",
+}
 
 
 def _format_hours(hours: float) -> str:
@@ -119,7 +147,8 @@ class TattlePlugin(Star):
                 ban_note,
             )
 
-        message = self._render_message(event, content, accused, reason)
+        evidence = await self._collect_evidence(event)
+        message = self._render_message(event, content, accused, reason, evidence)
         sent, failed = await self._broadcast_complaint(
             event,
             platform_id,
@@ -244,8 +273,8 @@ class TattlePlugin(Star):
             logger.exception("Failed to read platform name for OneBot fallback")
             return f"无法读取平台名称：{exc}"
 
-        if platform_name != "aiocqhttp":
-            return "当前平台不是 aiocqhttp"
+        if platform_name != ONEBOT_PLATFORM_NAME:
+            return f"当前平台不是 {ONEBOT_PLATFORM_NAME}"
 
         try:
             user_id = int(uid)
@@ -253,12 +282,13 @@ class TattlePlugin(Star):
             return "UID 不是纯数字"
 
         try:
-            if not await self._call_onebot_action(
+            dispatched, _ = await self._call_onebot_action(
                 event,
                 "send_private_msg",
                 user_id=user_id,
                 message=message,
-            ):
+            )
+            if not dispatched:
                 return "当前 OneBot 客户端不支持 call_action"
         except (
             AttributeError,
@@ -276,20 +306,19 @@ class TattlePlugin(Star):
         event: AstrMessageEvent,
         action: str,
         **payload: Any,
-    ) -> bool:
+    ) -> tuple[bool, Any]:
+        """Return (dispatched, result); dispatched is False if no API exists."""
         bot = getattr(event, "bot", None)
         if bot is None:
-            return False
+            return False, None
         direct = getattr(bot, "call_action", None)
         if callable(direct):
-            await direct(action=action, **payload)
-            return True
+            return True, await direct(action=action, **payload)
         api = getattr(bot, "api", None)
         call_action = getattr(api, "call_action", None)
         if callable(call_action):
-            await call_action(action, **payload)
-            return True
-        return False
+            return True, await call_action(action, **payload)
+        return False, None
 
     def _render_message(
         self,
@@ -297,6 +326,7 @@ class TattlePlugin(Star):
         content: str,
         accused: str,
         reason: str,
+        evidence: str = "",
     ) -> str:
         values = {
             "accused": accused,
@@ -305,8 +335,14 @@ class TattlePlugin(Star):
             "sender_id": self._safe_call(event.get_sender_id),
             "sender_name": self._safe_call(event.get_sender_name),
             "session_id": str(getattr(event, "unified_msg_origin", "")),
+            "evidence": evidence,
         }
-        return self._render_safe_template(self._load_message_template(), values)
+        template = self._load_message_template()
+        rendered = self._render_safe_template(template, values)
+        # Templates written before evidence existed still get the block, appended.
+        if evidence and not self._template_uses(template, "evidence"):
+            rendered = f"{rendered}\n{evidence}"
+        return rendered
 
     def _load_message_template(self) -> str:
         raw = self.config.get("message_template", DEFAULT_TEMPLATE)
@@ -323,6 +359,171 @@ class TattlePlugin(Star):
             return match.group(0)
 
         return TEMPLATE_PLACEHOLDER_RE.sub(replace_placeholder, template)
+
+    @staticmethod
+    def _template_uses(template: str, key: str) -> bool:
+        return any(
+            match.group(1) == key
+            for match in TEMPLATE_PLACEHOLDER_RE.finditer(template)
+        )
+
+    # ------------------------------------------------------------- 证据消息记录
+
+    async def _collect_evidence(self, event: AstrMessageEvent) -> str:
+        """Fetch the most recent messages of this chat as complaint evidence.
+
+        OneBot (aiocqhttp) only — every other platform returns an empty block.
+        Evidence is decoration: any failure is logged and swallowed so the
+        complaint itself still goes out.
+        """
+        count = self._evidence_count()
+        if count < 1:
+            return ""
+
+        platform_name = self._safe_call(event.get_platform_name)
+        if platform_name != ONEBOT_PLATFORM_NAME:
+            logger.debug(
+                "tattle: evidence skipped, platform %r is not %s",
+                platform_name,
+                ONEBOT_PLATFORM_NAME,
+            )
+            return ""
+
+        try:
+            entries = await self._fetch_recent_messages(event, count)
+        except Exception as exc:  # noqa: BLE001 - never break the complaint
+            logger.warning("tattle: failed to fetch message history: %s", exc)
+            return ""
+        if not entries:
+            return ""
+        return self._format_evidence(entries)
+
+    async def _fetch_recent_messages(
+        self,
+        event: AstrMessageEvent,
+        count: int,
+    ) -> list[dict]:
+        group_id = self._numeric_id(self._safe_call(event.get_group_id))
+        if group_id is not None:
+            action = "get_group_msg_history"
+            payload: dict[str, Any] = {"group_id": group_id, "count": count}
+        else:
+            user_id = self._numeric_id(self._safe_call(event.get_sender_id))
+            if user_id is None:
+                return []
+            action = "get_friend_msg_history"
+            payload = {"user_id": user_id, "count": count}
+
+        dispatched, result = await self._call_onebot_action(
+            event,
+            action,
+            **payload,
+            **self._routing_params(event),
+        )
+        if not dispatched:
+            logger.warning("tattle: OneBot client has no call_action, evidence skipped")
+            return []
+
+        messages = result.get("messages") if isinstance(result, dict) else result
+        if not isinstance(messages, list):
+            return []
+        entries = [entry for entry in messages if isinstance(entry, dict)]
+        # go-cqhttp ignores `count` and returns a fixed batch; NapCat honours it
+        # but may hand back newest-first. Normalise, then keep the tail.
+        if self._is_newest_first(entries):
+            entries.reverse()
+        return entries[-count:]
+
+    @staticmethod
+    def _is_newest_first(entries: list[dict]) -> bool:
+        stamps = [
+            entry["time"]
+            for entry in entries
+            if isinstance(entry.get("time"), (int, float))
+        ]
+        return len(stamps) >= 2 and stamps[0] > stamps[-1]
+
+    @classmethod
+    def _format_evidence(cls, entries: list[dict]) -> str:
+        lines = [f"——最近 {len(entries)} 条消息——"]
+        lines.extend(cls._format_evidence_entry(entry) for entry in entries)
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_evidence_entry(cls, entry: dict) -> str:
+        raw_sender = entry.get("sender")
+        sender = raw_sender if isinstance(raw_sender, dict) else {}
+        name = str(sender.get("card") or sender.get("nickname") or "").strip()
+        uid = str(sender.get("user_id") or "").strip()
+        if name and uid:
+            who = f"{name}({uid})"
+        else:
+            who = name or uid or "未知用户"
+
+        stamp = entry.get("time")
+        when = (
+            time.strftime(EVIDENCE_TIME_FORMAT, time.localtime(stamp))
+            if isinstance(stamp, (int, float)) and stamp > 0
+            else "--"
+        )
+
+        text = cls._flatten_message_segments(entry.get("message"))
+        if not text:
+            text = str(entry.get("raw_message") or "").strip()
+        if len(text) > EVIDENCE_TEXT_LIMIT:
+            text = text[:EVIDENCE_TEXT_LIMIT] + "…（已截断）"
+        return f"[{when}] {who}：{text or '[空消息]'}"
+
+    @staticmethod
+    def _flatten_message_segments(message: object) -> str:
+        if isinstance(message, str):
+            return message.strip()
+        if not isinstance(message, list):
+            return ""
+
+        parts: list[str] = []
+        for segment in message:
+            if not isinstance(segment, dict):
+                continue
+            seg_type = str(segment.get("type") or "")
+            raw_data = segment.get("data")
+            data = raw_data if isinstance(raw_data, dict) else {}
+            if seg_type == "text":
+                parts.append(str(data.get("text") or ""))
+            elif seg_type == "at":
+                target = str(data.get("qq") or "").strip()
+                parts.append("@全体成员" if target == "all" else f"@{target or '?'}")
+            else:
+                parts.append(
+                    EVIDENCE_SEGMENT_LABELS.get(seg_type, f"[{seg_type or '未知'}]")
+                )
+        return "".join(parts).strip()
+
+    def _evidence_count(self) -> int:
+        if not self._evidence_enabled():
+            return 0
+        count = int(self._config_number("recent_message_count", DEFAULT_EVIDENCE_COUNT))
+        if count < 1:
+            return 0
+        return min(count, MAX_EVIDENCE_COUNT)
+
+    def _evidence_enabled(self) -> bool:
+        raw = self.config.get("forward_recent_messages", DEFAULT_EVIDENCE_ENABLED)
+        if isinstance(raw, str):
+            return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+        return bool(raw)
+
+    @staticmethod
+    def _routing_params(event: AstrMessageEvent) -> dict[str, Any]:
+        # Mirrors AstrBot's own aiocqhttp calls: needed to route to the right
+        # bot account when several OneBot clients share one adapter.
+        self_id = getattr(getattr(event, "message_obj", None), "self_id", None)
+        return {"self_id": self_id} if self_id else {}
+
+    @staticmethod
+    def _numeric_id(value: str) -> int | None:
+        value = value.strip()
+        return int(value) if value.isdigit() else None
 
     # ---------------------------------------------------------------- ban 逻辑
 
